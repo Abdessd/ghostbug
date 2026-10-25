@@ -104,3 +104,24 @@ test('actual replay action engine detects the checkout bug and passes after corr
     }
   } finally { await browser.close(); }
 });
+
+test('recorded selectors identify the clicked element even when a list repeats its data-testid', async () => {
+  const browser = await chromium.launch({ headless: true, ...(browserPath ? { executablePath: browserPath } : {}) });
+  try {
+    const page = await browser.newPage();
+    const events: Array<Record<string, unknown>> = [];
+    await page.exposeBinding('__ghostbug_emit', (_source, event) => events.push(event));
+    // Like the RealWorld "Conduit" app: every article preview repeats the same data-testid.
+    const preview = (n: number) => `<div data-testid="article-preview"><a href="#a${n}"><h1>Title ${n}</h1><p data-testid="article-description">About ${n}</p></a></div>`;
+    await page.setContent(`<html><body>${[1, 2, 3].map(preview).join('')}
+      <button data-testid="tag" id="first-tag">a</button><button data-testid="tag">b</button><button data-testid="save">Save</button></body></html>`);
+    await page.evaluate(installCaptureListeners);
+    await page.getByText('About 3').click();
+    await page.locator('#first-tag').click();
+    await page.getByRole('button', { name: 'Save' }).click();
+    await page.waitForTimeout(50);
+    assert.deepEqual(events.map(e => e.selector), ['[data-testid="article-description"] >> nth=2', '#first-tag', '[data-testid="save"]']);
+    // Replay uses strict locators: each recorded selector must resolve to exactly the clicked element.
+    assert.equal(await page.locator(String(events[0].selector)).innerText(), 'About 3');
+  } finally { await browser.close(); }
+});

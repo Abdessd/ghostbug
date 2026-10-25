@@ -4,14 +4,33 @@ export function installCaptureListeners(): void {
   const emit = (window as unknown as { __ghostbug_emit?: (action: EmitAction) => void }).__ghostbug_emit;
   if (typeof emit !== 'function') return;
 
+  /** `selector` if it matches el alone, Playwright's `selector >> nth=i` if el is one of several matches. */
+  function locate(selector: string, el: Element): { selector: string; unique: boolean } | undefined {
+    let matches: Element[];
+    try { matches = Array.from(document.querySelectorAll(selector)); } catch { return undefined; }
+    const index = matches.indexOf(el);
+    if (index === -1) return undefined;
+    return matches.length === 1 ? { selector, unique: true } : { selector: `${selector} >> nth=${index}`, unique: false };
+  }
+
   function cssSelector(el: Element): string {
+    const tag = el.tagName.toLowerCase();
+    const attributes: string[] = [];
     const testid = el.getAttribute('data-testid');
-    if (testid && testid.length < 120) return `[data-testid=${JSON.stringify(testid)}]`;
-    if (el.id && el.id.length < 120) return `#${CSS.escape(el.id)}`;
+    if (testid && testid.length < 120) attributes.push(`[data-testid=${JSON.stringify(testid)}]`);
+    if (el.id && el.id.length < 120) attributes.push(`#${CSS.escape(el.id)}`);
     const aria = el.getAttribute('aria-label');
-    if (aria && aria.length < 120) return `${el.tagName.toLowerCase()}[aria-label=${JSON.stringify(aria)}]`;
+    if (aria && aria.length < 120) attributes.push(`${tag}[aria-label=${JSON.stringify(aria)}]`);
     const name = el.getAttribute('name');
-    if (name && name.length < 120) return `${el.tagName.toLowerCase()}[name=${JSON.stringify(name)}]`;
+    if (name && name.length < 120) attributes.push(`${tag}[name=${JSON.stringify(name)}]`);
+    // Lists often repeat a data-testid: prefer an attribute that identifies el alone, else keep the first
+    // attribute with an index, which survives layout changes (such as a bug fix) better than a DOM path.
+    const found = attributes.map(selector => locate(selector, el)).filter(candidate => candidate !== undefined);
+    const path = domPath(el);
+    return (found.find(candidate => candidate.unique) ?? found[0] ?? locate(path, el))?.selector ?? path;
+  }
+
+  function domPath(el: Element): string {
     const parts: string[] = [];
     let cursor: Element | null = el;
     while (cursor && cursor !== document.documentElement && parts.length < 9) {

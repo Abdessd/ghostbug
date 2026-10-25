@@ -17,7 +17,7 @@ record <url>
 
 ## Modules
 
-- `selector-script.ts`: minimal browser-side JavaScript for CSS selectors and user events, injected before page loads.
+- `selector-script.ts`: minimal browser-side JavaScript for CSS selectors and user events, injected before page loads. It prefers a `data-testid`, `id`, `aria-label` or `name` that matches only the clicked element; when a list repeats one, it records Playwright's `>> nth=` index rather than a layout-dependent DOM path.
 - `recorder.ts`: launches Chromium, records a small class of user actions plus filtered API responses, writes a versioned session.
 - `privacy.ts`: strips query strings, redacts input values and response fields; these are safeguards, not guaranteed sanitization.
 - `redact.ts`: the redaction core and request fingerprints. Self-contained on purpose: generated specs that need fingerprints embed its source, so recorder, `replay` and specs always compute the same `match` values.
