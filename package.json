@@ -1,0 +1,50 @@
+{
+  "name": "ghostbug-cli",
+  "version": "0.1.2",
+  "description": "Record a browser bug, generate a deterministic Playwright regression test.",
+  "type": "module",
+  "bin": {
+    "ghostbug": "./dist/cli.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "node --experimental-strip-types src/cli.ts",
+    "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "demo": "node examples/checkout/server.mjs",
+    "example:generate": "node --experimental-strip-types src/cli.ts generate examples/checkout/recording --expect-text \"Payment failed. Please retry.\" --out examples/checkout/checkout.spec.ts",
+    "example:replay": "node --experimental-strip-types src/cli.ts replay examples/checkout/recording --browser /usr/bin/chromium",
+    "test:dom": "node --experimental-strip-types --test tests/browser-dom/*.test.ts",
+    "test:e2e": "node --experimental-strip-types --test tests/e2e/*.test.ts",
+    "validate:local": "npm run typecheck && npm test && npm run build && npm run test:dom && npm pack --dry-run",
+    "validate:release": "npm run validate:local && npm run test:e2e:strict && npm audit --omit=dev --audit-level=high",
+    "test:e2e:strict": "node scripts/strict-e2e.mjs"
+  },
+  "dependencies": {
+    "playwright": "^1.54.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "@playwright/test": "^1.54.0",
+    "typescript": "^5.9.0"
+  },
+  "license": "MIT",
+  "keywords": [
+    "playwright",
+    "debugging",
+    "bug-report",
+    "replay",
+    "regression-testing",
+    "typescript"
+  ]
+}

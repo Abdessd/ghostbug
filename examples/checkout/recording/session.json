@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "name": "checkout-handles-payment-failure",
+  "recordedAt": "2026-10-25T12:00:00.000Z",
+  "startUrl": "http://localhost:3000/checkout",
+  "actions": [
+    {
+      "type": "click",
+      "selector": "[data-testid=\"pay-button\"]"
+    }
+  ],
+  "network": [
+    {
+      "method": "POST",
+      "path": "/api/pay",
+      "status": 500,
+      "contentType": "application/json",
+      "body": "{\"error\":\"payment_failed\"}"
+    }
+  ],
+  "expect": {
+    "text": "Payment failed. Please retry."
+  },
+  "notes": [
+    "Synthetic recording for the bundled demo; contains no personal data."
+  ]
+}

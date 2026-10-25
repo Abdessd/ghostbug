@@ -1,0 +1,102 @@
+import { chromium, type Browser, type Response } from 'playwright';
+import { REDACTED, safeUrl, scrubInput, scrubResponseBody, scrubString } from './privacy.ts';
+import { writeRecording } from './storage.ts';
+import { installCaptureListeners } from './selector-script.ts';
+import type { Recording, RecordedAction, NetworkFixture } from './types.ts';
+import { createInterface } from 'node:readline';
+
+interface RecordOptions {
+  url: string;
+  output: string;
+  duration?: number;
+  headless?: boolean;
+  browserPath?: string;
+  apiPrefix?: string;
+}
+
+export async function recordSession(options: RecordOptions): Promise<string> {
+  const startUrl = safeUrl(options.url);
+  const origin = new URL(startUrl).origin;
+  const apiPrefix = options.apiPrefix ?? '/api/';
+  if (!apiPrefix.startsWith('/')) throw Error('--api-prefix must start with /');
+  const browser: Browser = await chromium.launch({
+    headless: options.headless ?? false,
+    ...(options.browserPath ? { executablePath: options.browserPath } : {})
+  });
+  const actions: RecordedAction[] = [];
+  const network: NetworkFixture[] = [];
+  const pending = new Set<Promise<void>>();
+  try {
+    const context = await browser.newContext({ serviceWorkers: 'block' });
+    await context.exposeBinding('__ghostbug_emit', (_source, raw: unknown) => {
+      if (!raw || typeof raw !== 'object') return;
+      const event = raw as Record<string, unknown>;
+      if (typeof event.selector !== 'string' || event.selector.length > 500 || !event.selector) return;
+      // Avoid storing a selector when it visibly contains an email, token or card number.
+      if (scrubString(event.selector) !== event.selector) return;
+      if (event.type === 'click') actions.push({ type: 'click', selector: event.selector });
+      if (event.type === 'check' && typeof event.checked === 'boolean') actions.push({ type: 'check', selector: event.selector, checked: event.checked });
+      if (event.type === 'fill') actions.push({ type: 'fill', selector: event.selector, value: scrubInput(event.value) });
+    });
+    await context.addInitScript(installCaptureListeners);
+    const page = await context.newPage();
+    page.on('response', (response: Response) => {
+      const task = (async () => {
+        try {
+          const url = new URL(response.url());
+          if (url.origin !== origin || !url.pathname.startsWith(apiPrefix)) return;
+          if (scrubString(url.pathname) !== url.pathname) return;
+          const type = response.headers()['content-type'] ?? '';
+          if (!type.includes('json') && !type.startsWith('text/plain')) return;
+          const responseBody = await response.body();
+          if (responseBody.byteLength > 64 * 1024) return;
+          const method = response.request().method();
+          network.push({
+            method, path: url.pathname, status: response.status(),
+            contentType: type.split(';')[0] ?? 'application/json',
+            body: scrubResponseBody(responseBody.toString('utf8'), type)
+          });
+        } catch { /* Failed or aborted response: skip, don't block recording. */ }
+      })();
+      pending.add(task);
+      void task.finally(() => pending.delete(task));
+    });
+    console.log(`\n🔴 Recording ${startUrl}`);
+    console.log('Sensitive input values are replaced with [REDACTED].');
+    console.log('Only same-origin JSON/text API responses under ' + apiPrefix + ' are captured.');
+    await page.goto(startUrl, { waitUntil: 'domcontentloaded' });
+    if (options.duration !== undefined) {
+      await Promise.race([
+        new Promise<void>(resolve => setTimeout(resolve, options.duration)),
+        page.waitForEvent('close').then(() => undefined)
+      ]);
+    } else if (process.stdin.isTTY) {
+      const rl = createInterface({ input: process.stdin, output: process.stdout });
+      try {
+        await Promise.race([
+          new Promise<void>(resolve => rl.question('Reproduce the bug, then press Enter to save... ', () => resolve())),
+          page.waitForEvent('close').then(() => undefined)
+        ]);
+      } finally { rl.close(); }
+    } else {
+      throw Error('Non-interactive terminal: pass --duration <milliseconds>');
+    }
+    await Promise.allSettled(Array.from(pending));
+    const recording: Recording = {
+      version: 1,
+      name: 'recording-' + new Date().toISOString().replace(/[:.]/g, '-'),
+      recordedAt: new Date().toISOString(),
+      startUrl,
+      actions,
+      network,
+      notes: [
+        'Review ALL data before sharing. Automated redaction is not comprehensive.',
+        `Input values marked ${REDACTED} must be replaced with safe test values before replay.`,
+        'Responses may depend on undisclosed app state. Replay requires an accessible frontend.'
+      ]
+    };
+    return await writeRecording(options.output, recording);
+  } finally {
+    await browser.close();
+  }
+}

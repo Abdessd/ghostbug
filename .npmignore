@@ -1,0 +1,6 @@
+src/
+tests/
+examples/
+docs/
+.github/
+node_modules/

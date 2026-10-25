@@ -1,0 +1,30 @@
+name: CI
+on:
+  push:
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install
+        run: npm install
+      - name: Type check
+        run: npm run typecheck
+      - name: Unit tests
+        run: npm test
+      - name: Build
+        run: npm run build
+      - name: Browser install
+        run: npx playwright install --with-deps chromium
+      - name: Browser DOM integration
+        run: npm run test:dom
+      - name: HTTP browser E2E (record, replay, generated test)
+        run: npm run test:e2e:strict
+      - name: Package dry run
+        run: npm pack --dry-run
+      - name: Dependency audit (production)
+        run: npm audit --omit=dev --audit-level=high
