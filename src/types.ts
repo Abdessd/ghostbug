@@ -18,9 +18,13 @@ export type RecordedAction = RecordedClick | RecordedFill | RecordedCheck;
 export interface NetworkFixture {
   method: string;
   path: string;
+  /** Set only for responses captured from an --api-origin other than the recorded page's origin. */
+  origin?: string;
   status: number;
   contentType: string;
   body: string;
+  /** fingerprintRequest() of the redacted query string and body, used to pick the right fixture on replay. */
+  match?: string;
 }
 
 export interface Recording {
@@ -36,6 +40,8 @@ export interface Recording {
 
 export interface ReplayOptions {
   baseUrl?: string;
+  /** Non-production hostnames that replay may target besides localhost. */
+  allowHosts?: string[];
   expectText?: string;
   headed?: boolean;
   browserPath?: string;

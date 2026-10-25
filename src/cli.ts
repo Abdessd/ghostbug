@@ -9,8 +9,10 @@ GhostBug v0.1.2 — Record a browser bug. Make it reproducible.
 
 Usage:
   ghostbug record <url> [--out <dir>] [--duration <ms>] [--headless] [--browser <path>]
+                  [--api-prefix <paths>] [--api-origin <origins>]
   ghostbug generate <recording-dir> --expect-text <text> [--out <file>]
-  ghostbug replay <recording-dir> [--expect-text <text>] [--base-url <url>] [--browser <path>] [--headed]
+  ghostbug replay <recording-dir> [--expect-text <text>] [--base-url <url>] [--allow-host <hosts>]
+                  [--browser <path>] [--headed]
 
 Examples:
   ghostbug record http://localhost:3000/checkout --out .ghostbug/checkout
@@ -18,12 +20,16 @@ Examples:
   ghostbug replay .ghostbug/checkout --base-url http://localhost:3000
 
 Options:
-  --api-prefix <path>    Capture same-origin API responses starting with this path (default /api/)
+  --api-prefix <paths>   Capture same-origin API responses under these paths, comma-separated (default /api/)
+  --api-origin <origins> Also capture every JSON/text response from these origins (e.g. http://localhost:8000)
+  --allow-host <hosts>   Allow replay against these non-production hostnames besides localhost
   --duration <ms>        Stop recording after N milliseconds (for noninteractive scripts)
   --browser <path>       Use an installed Chromium executable (e.g. /usr/bin/chromium)
   --headless             Record without a visible browser (requires --duration)
   --headed               Show browser during replay
   --help                 Show this message
+
+Generated specs read GHOSTBUG_BASE_URL and GHOSTBUG_ALLOW_HOST instead of --base-url and --allow-host.
 
 WARNING: All recordings are local. Privacy filters are best-effort; REVIEW before sharing.
 `;
@@ -34,8 +40,18 @@ function flag(args: string[], name: string): string | undefined {
   if (i + 1 >= args.length || args[i + 1].startsWith('--')) throw Error(`Missing value for ${name}`);
   return args[i + 1];
 }
+/** All values of a repeatable flag, each of which may also be a comma-separated list. */
+function flagList(args: string[], name: string): string[] {
+  const values: string[] = [];
+  args.forEach((arg, i) => {
+    if (arg !== name) return;
+    if (i + 1 >= args.length || args[i + 1].startsWith('--')) throw Error(`Missing value for ${name}`);
+    values.push(...args[i + 1].split(',').map(value => value.trim()).filter(Boolean));
+  });
+  return values;
+}
 function positional(args: string[]): string[] {
-  const valued = new Set(['--out', '--duration', '--browser', '--expect-text', '--base-url', '--api-prefix']);
+  const valued = new Set(['--out', '--duration', '--browser', '--expect-text', '--base-url', '--api-prefix', '--api-origin', '--allow-host']);
   const result: string[] = [];
   for (let i = 0; i < args.length; i++) {
     if (valued.has(args[i])) { i++; continue; }
@@ -63,7 +79,8 @@ async function main(): Promise<void> {
       url: location, output, duration,
       headless: args.includes('--headless'),
       browserPath: flag(args, '--browser') ?? process.env.CHROMIUM_PATH,
-      apiPrefix: flag(args, '--api-prefix')
+      apiPrefixes: flagList(args, '--api-prefix'),
+      apiOrigins: flagList(args, '--api-origin')
     });
     console.log(`\n✓ Saved ${file}`);
     console.log(`Next: ghostbug generate ${output} --expect-text "The correct behavior"`);
@@ -82,8 +99,11 @@ async function main(): Promise<void> {
   } else if (command === 'replay') {
     const data = await readRecording(location);
     const { replaySession } = await import('./replay.ts');
+    const allowHosts = flagList(args, '--allow-host');
+    if (allowHosts.length) console.warn('⚠ --allow-host: requests without a recorded response reach that server. Never point replay at production.');
     await replaySession(data, {
       baseUrl: flag(args, '--base-url'),
+      allowHosts,
       expectText: flag(args, '--expect-text'),
       headed: args.includes('--headed'),
       browserPath: flag(args, '--browser') ?? process.env.CHROMIUM_PATH

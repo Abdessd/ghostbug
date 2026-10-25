@@ -5,7 +5,7 @@ import { test, expect } from '@playwright/test';
 const originalOrigin = "http://localhost:3000";
 const startPath = "/checkout";
 type GhostBugAction = { type: 'click'; selector: string } | { type: 'fill'; selector: string; value: string } | { type: 'check'; selector: string; checked: boolean };
-type GhostBugResponse = { method: string; path: string; status: number; contentType: string; body: string };
+type GhostBugResponse = { method: string; path: string; origin?: string; status: number; contentType: string; body: string; match?: string };
 const actions: GhostBugAction[] = [
   {
     "type": "click",
@@ -26,27 +26,32 @@ const expectedText = "Payment failed. Please retry.";
 test("checkout-handles-payment-failure", async ({ page }) => {
   const baseUrl = process.env.GHOSTBUG_BASE_URL || originalOrigin;
   const base = new URL(baseUrl);
-  if (!['http:', 'https:'].includes(base.protocol) || !['localhost', '127.0.0.1', '[::1]'].includes(base.hostname) || base.username || base.password) {
-    throw Error('GhostBug refuses to replay against a non-local URL. Set GHOSTBUG_BASE_URL=http://localhost:3000');
+  // GHOSTBUG_ALLOW_HOST=staging.local opts specific non-production hosts in, like replay --allow-host.
+  const allowedHosts = (process.env.GHOSTBUG_ALLOW_HOST ?? '').split(',').map(host => host.trim().toLowerCase().replace(/^\[|\]$/g, '')).filter(Boolean);
+  const allowed = ['localhost', '127.0.0.1', '[::1]'].includes(base.hostname) || allowedHosts.includes(base.hostname.replace(/^\[|\]$/g, ''));
+  if (!['http:', 'https:'].includes(base.protocol) || !allowed || base.username || base.password) {
+    throw Error('GhostBug refuses to replay against a non-local URL. Set GHOSTBUG_BASE_URL=http://localhost:3000, or GHOSTBUG_ALLOW_HOST for a non-production host');
   }
   const target = new URL(startPath, base.origin);
-  const queue = new Map<string, typeof recordedResponses>();
+  const apiOrigins = new Set(recordedResponses.flatMap(fixture => fixture.origin ? [fixture.origin] : []));
+  const queue = new Map<string, GhostBugResponse[]>();
   for (const fixture of recordedResponses) {
-    const key = fixture.method + ' ' + fixture.path;
-    queue.set(key, [...(queue.get(key) ?? []), fixture]);
+    const key = fixture.method + ' ' + (fixture.origin ?? '') + fixture.path;
+    const matches = queue.get(key);
+    if (matches) matches.push(fixture); else queue.set(key, [fixture]);
   }
+  // Same-origin requests without a fixture reach the app; recorded API origins only get fixtures; others are blocked.
   await page.route('**/*', async route => {
     const request = route.request();
     const url = new URL(request.url());
-    if (url.origin !== target.origin) return route.abort('blockedbyclient');
-    const key = request.method() + ' ' + url.pathname;
-    const matched = queue.get(key);
-    if (matched) {
-      const fixture = matched.shift();
-      if (!fixture) return route.fulfill({ status: 418, body: 'GhostBug: fixture exhausted' });
-      return route.fulfill({ status: fixture.status, contentType: fixture.contentType, body: fixture.body });
-    }
-    return route.continue();
+    const sameOrigin = url.origin === target.origin;
+    if (!sameOrigin && !apiOrigins.has(url.origin)) return route.abort('blockedbyclient');
+    const cors = sameOrigin ? {} : { headers: { 'access-control-allow-origin': target.origin, 'access-control-allow-credentials': 'true' } };
+    const matches = queue.get(request.method() + ' ' + (sameOrigin ? '' : url.origin) + url.pathname);
+    if (!matches) return sameOrigin ? route.continue() : route.fulfill({ status: 418, ...cors, body: 'GhostBug: no recorded response' });
+    const fixture = matches.shift();
+    if (!fixture) return route.fulfill({ status: 418, ...cors, body: 'GhostBug: fixture exhausted' });
+    return route.fulfill({ status: fixture.status, contentType: fixture.contentType, ...cors, body: fixture.body });
   });
   await page.goto(target.toString());
   for (const action of actions) {

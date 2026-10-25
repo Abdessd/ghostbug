@@ -99,21 +99,25 @@ Click **Pay now** in the opened browser, press Enter, then generate with `--expe
 
 ```text
 ghostbug record <url> [--out <dir>] [--duration <ms>] [--headless]
-                       [--browser <path>] [--api-prefix <path>]
+                       [--browser <path>] [--api-prefix <paths>] [--api-origin <origins>]
 ghostbug generate <recording-dir> --expect-text <message> [--out <file>]
-ghostbug replay <recording-dir> [--base-url <local-url>]
+ghostbug replay <recording-dir> [--base-url <local-url>] [--allow-host <hosts>]
                         [--expect-text <message>] [--headed] [--browser <path>]
 ```
 
-- `record`: starts Chromium, saves clicks/form changes and a subset of same-origin API responses to `session.json`. Use `--duration 10000 --headless` for unattended recording (you must still supply interactions through some other mechanism).
+- `record`: starts Chromium, saves clicks/form changes and a subset of API responses to `session.json`. Use `--duration 10000 --headless` for unattended recording (you must still supply interactions through some other mechanism).
+  - `--api-prefix /api/,/graphql` captures same-origin responses under several paths (default `/api/`).
+  - `--api-origin http://localhost:8000` also captures every JSON/text response from a separate backend, e.g. a Vite frontend on `:5173` talking to an API on `:8000`. On replay that origin only ever gets recorded responses (with CORS headers); unrecorded calls get HTTP 418 and never reach the network.
+  - Responses are saved in request order, each with a `match` fingerprint of its redacted query string and body, so replay serves the right response to parallel or repeated calls to the same endpoint.
 - `generate`: produces `ghostbug.spec.ts` and updates the expected message in `session.json`.
-- `replay`: uses Playwright directly, mocks captured API responses and checks the expected text. **Only accepts localhost for safety, and blocks cross-origin browser requests by default.**
-- Run the generated Playwright test with `npx playwright test <path-to-test>` from a project with `@playwright/test` installed, adjusting its Playwright configuration and app startup as needed.
+- `replay`: uses Playwright directly, mocks captured API responses and checks the expected text. **Only accepts localhost for safety, and blocks other origins except recorded `--api-origin` ones.** `--allow-host staging.local` explicitly allows a non-production hostname (Docker service, staging); requests without a recorded response do reach that server, so never point it at production.
+- Run the generated Playwright test with `npx playwright test <path-to-test>` from a project with `@playwright/test` installed, adjusting its Playwright configuration and app startup as needed. It reads `GHOSTBUG_BASE_URL` and `GHOSTBUG_ALLOW_HOST` in place of `--base-url` and `--allow-host`.
 
 ## Privacy
 
 - No cloud server, account, external AI service, cookies, request bodies, or browser storage exports.
-- Only responses from the **recorded origin** whose path starts with `/api/` are eligible for collection by default.
+- Only responses from the **recorded origin** whose path starts with `/api/` are eligible for collection by default, plus any origin you pass with `--api-origin`.
+- Request query strings and bodies are never saved. Each response stores only a 16-hex-digit `match` fingerprint, hashed **after** redaction; see [privacy design](docs/privacy.md) for what it can and cannot reveal.
 - Only JSON and plain-text responses up to 64 KiB are included.
 - Query parameters and fragments are stripped from recorded start URLs and response matchers.
 - All form text values are replaced with `[REDACTED]` by default. Replace those placeholders with safe test values manually.
@@ -126,10 +130,10 @@ See [privacy design](docs/privacy.md).
 ## Current limitations
 
 - Chromium only; no browser extension.
-- Simple clicks, form changes, same-origin `/api/` JSON/text responses. No complete tracing, WebSocket replay, navigation timeline, file uploads, or cross-origin API fixture capture.
+- Simple clicks, form changes, JSON/text API responses (same-origin under `--api-prefix`, or from `--api-origin`). No complete tracing, WebSocket replay, navigation timeline or file uploads.
 - The frontend must be running. Backend-dependent state changes and complex asynchronous flows may not reproduce reliably.
 - Generated assertions are currently limited to an expected visible text chosen by you. The generated spec also refuses remote URLs; set `GHOSTBUG_BASE_URL` to your local app when the original recording used a remote origin.
-- CSS selectors and network fixture ordering can be brittle in dynamic apps.
+- CSS selectors can be brittle in dynamic apps. Requests whose redacted query or body changes between recording and replay (timestamps, nonces, `[REDACTED]` values you replaced) fall back to recorded order; raw-text, multipart and binary bodies are matched by order only.
 - No automated anonymization guarantee and no turnkey secret-safe export.
 - Playwright browser binaries may need installation separately (`npx playwright install chromium`).
 
@@ -165,7 +169,7 @@ npm run build
 npm run typecheck
 ```
 
-Implementation: `src/recorder.ts`, `src/selector-script.ts`, `src/privacy.ts`, `src/generator.ts`, `src/replay.ts`. The v1 JSON recording is documented in [architecture](docs/architecture.md).
+Implementation: `src/recorder.ts`, `src/selector-script.ts`, `src/privacy.ts`, `src/redact.ts`, `src/generator.ts`, `src/replay.ts`. The v1 JSON recording is documented in [architecture](docs/architecture.md).
 
 ## Roadmap
 

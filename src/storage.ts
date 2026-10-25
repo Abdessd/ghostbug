@@ -18,14 +18,23 @@ function validAction(a: unknown): a is RecordedAction {
   if (v.type === 'check') return typeof v.checked === 'boolean';
   return false;
 }
+function validOrigin(value: unknown): boolean {
+  if (typeof value !== 'string' || value.length > 200) return false;
+  try {
+    const url = new URL(value);
+    return ['http:', 'https:'].includes(url.protocol) && url.origin === value;
+  } catch { return false; }
+}
 function validFixture(f: unknown): f is NetworkFixture {
   if (!f || typeof f !== 'object') return false;
   const v = f as Record<string, unknown>;
   return typeof v.method === 'string' && /^[A-Z]+$/.test(v.method) &&
     typeof v.path === 'string' && v.path.length <= 2048 && v.path.startsWith('/') && !v.path.startsWith('//') && !/[?#]/.test(v.path) &&
+    (v.origin === undefined || validOrigin(v.origin)) &&
     typeof v.status === 'number' && Number.isInteger(v.status) && v.status >= 100 && v.status <= 599 &&
     typeof v.body === 'string' && Buffer.byteLength(v.body, 'utf8') <= 64 * 1024 &&
-    typeof v.contentType === 'string' && v.contentType.length <= 100;
+    typeof v.contentType === 'string' && v.contentType.length <= 100 &&
+    (v.match === undefined || (typeof v.match === 'string' && /^[0-9a-f]{16}$/.test(v.match)));
 }
 export function parseRecording(input: unknown): Recording {
   if (!input || typeof input !== 'object') throw Error('Invalid recording: expected object');

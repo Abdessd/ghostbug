@@ -39,7 +39,8 @@ test('record URLs reject credentials and unsafe protocols', () => {
 test('generated test includes a local-only safety guard and blocks non-local subresources', () => {
   const source = generateSpec(sample);
   assert.match(source, /GhostBug refuses to replay against a non-local URL/);
-  assert.match(source, /url\.origin !== target\.origin/);
+  assert.match(source, /url\.origin === target\.origin/);
+  assert.match(source, /GHOSTBUG_ALLOW_HOST/);
   assert.match(source, /route\.abort\('blockedbyclient'\)/);
   assert.doesNotMatch(source, /auth=secret/);
 });
@@ -55,4 +56,23 @@ test('recordings reject oversized or malformed fixture data', () => {
   assert.throws(() => parseRecording({ ...sample, network: [{ ...sample.network[0], status: 200.3 }] }), /malformed/);
   assert.throws(() => parseRecording({ ...sample, actions: [{ type: 'fill', selector: '#a', value: 'x'.repeat(10001) }] }), /malformed/);
   assert.throws(() => parseRecording({ ...sample, notes: [42] }), /Invalid notes/);
+});
+
+test('--allow-host opts specific non-production hosts into replay', () => {
+  assert.equal(resolveReplayTarget(sample.startUrl, 'http://staging.local:8080', ['Staging.Local']).href, 'http://staging.local:8080/checkout');
+  assert.equal(resolveReplayTarget('http://[fd00::1]:3000/checkout', undefined, ['fd00::1']).hostname, '[fd00::1]');
+  assert.throws(() => resolveReplayTarget(sample.startUrl, 'http://other.local', ['staging.local']), /localhost-only/);
+  assert.throws(() => resolveReplayTarget(sample.startUrl, 'http://u:p@staging.local', ['staging.local']), /credentials/);
+  assert.throws(() => resolveReplayTarget(sample.startUrl, 'http://staging.local', ['*.local']), /hostname/);
+  assert.throws(() => resolveReplayTarget(sample.startUrl, 'http://staging.local', ['http://staging.local']), /hostname/);
+  assert.equal(fixtureKey('get', '/users', 'http://localhost:8000'), 'GET http://localhost:8000/users');
+});
+
+test('recordings validate API origins and request fingerprints', () => {
+  const fixture = sample.network[0];
+  assert.doesNotThrow(() => parseRecording({ ...sample, network: [{ ...fixture, origin: 'http://localhost:8000', match: '0123456789abcdef' }] }));
+  assert.throws(() => parseRecording({ ...sample, network: [{ ...fixture, origin: 'http://localhost:8000/api' }] }), /malformed/);
+  assert.throws(() => parseRecording({ ...sample, network: [{ ...fixture, origin: 'http://user:pw@localhost:8000' }] }), /malformed/);
+  assert.throws(() => parseRecording({ ...sample, network: [{ ...fixture, origin: 'file:///etc' }] }), /malformed/);
+  assert.throws(() => parseRecording({ ...sample, network: [{ ...fixture, match: 'not-a-fingerprint' }] }), /malformed/);
 });

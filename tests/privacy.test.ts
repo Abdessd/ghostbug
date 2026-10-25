@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { scrubString, scrubValue, scrubInput, safeUrl, scrubResponseBody } from '../src/privacy.ts';
+import { scrubString, scrubValue, scrubInput, safeUrl, scrubResponseBody, fingerprintRequest } from '../src/privacy.ts';
 
 test('scrubs emails, bearer auth and GitHub-style tokens', () => {
   assert.equal(scrubString('contact foo@example.com now'), 'contact [REDACTED] now');
@@ -35,4 +35,20 @@ test('matches short sensitive words only as whole key segments', () => {
 test('keeps booleans and null under sensitive keys so replay logic is unchanged', () => {
   assert.deepEqual(scrubValue({ emailVerified: false, phone: null, session: { active: true, token: 'x' } }),
     { emailVerified: false, phone: null, session: '[REDACTED]' });
+});
+test('request fingerprints are computed on the redacted query and body', () => {
+  const page2 = fingerprintRequest('?page=2&q=chat', null);
+  assert.match(page2 ?? '', /^[0-9a-f]{16}$/);
+  assert.equal(fingerprintRequest('?q=chat&page=2', null), page2);
+  assert.notEqual(fingerprintRequest('?page=2&q=chien', null), page2);
+  // Redacted values never reach the hash, so it cannot be used to confirm a guessed secret.
+  assert.equal(fingerprintRequest('', '{"user":"a@example.com","password":"x"}', 'application/json'),
+    fingerprintRequest('', '{"user":"b@example.com","password":"y"}', 'text/plain;charset=UTF-8'));
+  assert.equal(fingerprintRequest('?token=a', 'password=x&id=1', 'application/x-www-form-urlencoded'),
+    fingerprintRequest('?token=b', 'password=y&id=1', 'application/x-www-form-urlencoded'));
+  assert.notEqual(fingerprintRequest('', 'password=x&id=1', 'application/x-www-form-urlencoded'),
+    fingerprintRequest('', 'password=x&id=2', 'application/x-www-form-urlencoded'));
+  // Bodies that cannot be redacted field by field get no fingerprint.
+  assert.equal(fingerprintRequest('', 'hunter2', 'text/plain'), undefined);
+  assert.equal(fingerprintRequest('', '"hunter2"', 'application/json'), undefined);
 });

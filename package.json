@@ -17,7 +17,7 @@
     "node": ">=22.12.0"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node -e \"require('node:fs').copyFileSync('src/redact.ts', 'dist/redact.source.ts')\"",
     "dev": "node --experimental-strip-types src/cli.ts",
     "test": "node --experimental-strip-types --test tests/*.test.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",

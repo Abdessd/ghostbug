@@ -1,29 +1,34 @@
 import { chromium, type Page, type Route } from 'playwright';
 import type { Recording, NetworkFixture, ReplayOptions } from './types.ts';
-import { REDACTED } from './privacy.ts';
+import { REDACTED, fingerprintRequest } from './privacy.ts';
 import { fixtureKey, resolveReplayTarget } from './safety.ts';
 
-/** Install deterministic same-origin HTTP fixtures and reject cross-origin requests. */
+/**
+ * Install deterministic HTTP fixtures. Same-origin requests without a fixture reach the local app,
+ * requests to a recorded API origin only ever get fixtures, and every other origin is blocked.
+ */
 export function makeNetworkHandler(recording: Recording, target: URL): (route: Route) => Promise<void> {
   const queued = new Map<string, NetworkFixture[]>();
   for (const fixture of recording.network) {
-    const key = fixtureKey(fixture.method, fixture.path);
+    const key = fixtureKey(fixture.method, fixture.path, fixture.origin);
     const matches = queued.get(key);
     if (matches) matches.push(fixture);
     else queued.set(key, [fixture]);
   }
+  const apiOrigins = new Set(recording.network.flatMap(fixture => fixture.origin ? [fixture.origin] : []));
   return async (route: Route): Promise<void> => {
     const request = route.request();
     const url = new URL(request.url());
-    if (url.origin !== target.origin) return route.abort('blockedbyclient');
-    const key = fixtureKey(request.method(), url.pathname);
-    const matches = queued.get(key);
-    if (matches) {
-      const fixture = matches.shift();
-      if (!fixture) return route.fulfill({ status: 418, body: 'GhostBug: fixture exhausted' });
-      return route.fulfill({ status: fixture.status, contentType: fixture.contentType, body: fixture.body });
-    }
-    return route.continue();
+    const sameOrigin = url.origin === target.origin;
+    if (!sameOrigin && !apiOrigins.has(url.origin)) return route.abort('blockedbyclient');
+    const cors = sameOrigin ? {} : { headers: { 'access-control-allow-origin': target.origin, 'access-control-allow-credentials': 'true' } };
+    const matches = queued.get(fixtureKey(request.method(), url.pathname, sameOrigin ? '' : url.origin));
+    if (!matches) return sameOrigin ? route.continue() : route.fulfill({ status: 418, ...cors, body: 'GhostBug: no recorded response' });
+    // Prefer the fixture recorded for the same redacted query and body; otherwise keep recorded order.
+    const fingerprint = matches.some(fixture => fixture.match) ? fingerprintRequest(url.search, request.postData(), request.headers()['content-type']) : undefined;
+    const [fixture] = matches.splice(Math.max(0, matches.findIndex(f => fingerprint !== undefined && f.match === fingerprint)), 1);
+    if (!fixture) return route.fulfill({ status: 418, ...cors, body: 'GhostBug: fixture exhausted' });
+    return route.fulfill({ status: fixture.status, contentType: fixture.contentType, ...cors, body: fixture.body });
   };
 }
 
@@ -55,7 +60,7 @@ export async function replayActions(page: Page, recording: Recording, expected: 
 }
 
 export async function replaySession(recording: Recording, options: ReplayOptions = {}): Promise<void> {
-  const target = resolveReplayTarget(recording.startUrl, options.baseUrl);
+  const target = resolveReplayTarget(recording.startUrl, options.baseUrl, options.allowHosts);
   const expected = options.expectText ?? recording.expect?.text;
   if (!expected?.trim()) throw Error('Specify --expect-text "Expected UI message" before replay');
   const browser = await chromium.launch({

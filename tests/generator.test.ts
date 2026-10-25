@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { generateSpec } from '../src/generator.ts';
 import { parseRecording } from '../src/storage.ts';
+import { fingerprintRequest } from '../src/privacy.ts';
 import type { Recording } from '../src/types.ts';
 const recording: Recording = {
   version: 1, name: 'Demo', recordedAt: new Date(0).toISOString(), startUrl: 'http://localhost:3000/checkout?secret=oops',
@@ -25,4 +26,12 @@ test('does not interpolate malicious values as code', () => {
 });
 test('rejects broken session files', () => {
   assert.throws(() => parseRecording({ version: 1, actions: [] }), /malformed/);
+});
+test('embeds the fingerprint code only when one endpoint has different recorded requests', () => {
+  assert.doesNotMatch(generateSpec(recording, 'ok'), /createHash|fingerprintRequest/);
+  const item = (id: number) => ({ method: 'GET', path: '/api/item', status: 200, contentType: 'application/json', body: '{}', match: fingerprintRequest('?id=' + id, null) });
+  const spec = generateSpec({ ...recording, network: [item(1), item(2)] }, 'ok');
+  assert.match(spec, /import \{ createHash \} from 'node:crypto';/);
+  assert.match(spec, /function fingerprintRequest\(search: string, body: string \| null, contentType = ''\)/);
+  assert.doesNotMatch(spec, /^export /m);
 });
