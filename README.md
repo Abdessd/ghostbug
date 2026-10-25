@@ -23,7 +23,7 @@ GhostBug uses Playwright under the hood and does not pretend to replace Playwrig
 Prerequisites: Node.js 22.12+, npm, and a running frontend app accessible from your machine.
 
 ```bash
-git clone https://github.com/YOUR-USERNAME/ghostbug.git
+git clone https://github.com/Abdessd/ghostbug.git
 cd ghostbug
 npm install
 npx playwright install chromium
