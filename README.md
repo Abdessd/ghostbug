@@ -139,12 +139,11 @@ See [privacy design](docs/privacy.md).
 
 ## Validation status
 
-**v0.1.2: 22 verified checks**: 19 unit/server tests and 3 offline Chromium DOM integration tests.
-Source type checking, building, emitted JS syntax, and npm packaging were also checked.
+**Current `main`: all automated checks pass on Linux** (Node 24, Playwright 1.64.1, Google Chrome): typecheck, 28 unit/server tests, 4 Chromium DOM tests, 6 strict HTTP E2E scenarios (live recording, red-to-green replay, generated spec through `@playwright/test`, `--api-origin` capture with fingerprinted replay, allowed hosts), build, `npm pack --dry-run` and `npm audit` (0 vulnerabilities). GhostBug was also exercised on a real third-party app, the RealWorld "Conduit" Vue 3 frontend.
 
-**3 full HTTP E2E scenarios are still NOT verified** in the restricted sandbox: recording a live localhost response, real HTTP red-to-green replay, and executing the generated spec through `@playwright/test`. Chromium rejects *all* browser navigation here with `ERR_BLOCKED_BY_ADMINISTRATOR`; npm cannot resolve `registry.npmjs.org` (`EAI_AGAIN`). `npm audit`, clean dependency installation, and an end-to-end release verification therefore remain open.
+**Not yet verified:** GitHub Actions on Node 22, a clean `npm ci`, installing the packed tarball, macOS and Windows.
 
-`npm run test:e2e` records E2E scenarios as **SKIP** when these prerequisites are absent. **SKIP is not PASS.** The CI and release gate run `npm run test:e2e:strict`, which MUST fail if any scenario cannot run.
+`npm run test:e2e` records E2E scenarios as **SKIP** when Chromium cannot navigate or `@playwright/test` is missing. **SKIP is not PASS.** The CI and release gate run `npm run test:e2e:strict`, which MUST fail if any scenario cannot run.
 
 See **[full validation report](docs/validation.md)** before claiming production readiness.
 
@@ -158,7 +157,7 @@ npm run test:e2e:strict
 npm audit --omit=dev --audit-level=high
 ```
 
-The repo does not yet include an npm lockfile. Generate and commit `package-lock.json` after a successful clean install, then change CI installation to `npm ci`.
+`package-lock.json` is committed; CI still runs `npm install` and should move to `npm ci` once a clean checkout is verified.
 
 ## Development
 
