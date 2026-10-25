@@ -119,11 +119,17 @@ test('CLI-generated Playwright spec runs against corrected checkout on local HTT
   try {
     const spec = join(dir, 'checkout.spec.ts');
     await writeFile(spec, generateSpec(original));
+    // An explicit testDir stops Playwright from applying .gitignore, which lists .ghostbug-e2e-*/.
+    const config = join(dir, 'playwright.config.mjs');
+    await writeFile(config, `export default ${JSON.stringify({
+      testDir: '.', outputDir: 'test-results',
+      ...(browserPath ? { use: { launchOptions: { executablePath: browserPath } } } : {})
+    })};\n`);
     await withServer(checkoutServer(true), async baseUrl => {
       const output = await new Promise<{ code: number | null; output: string }>((done, fail) => {
-        const child = spawn(process.execPath, [resolve('node_modules/playwright/cli.js'), 'test', spec, '--workers=1', '--reporter=line'], {
+        const child = spawn(process.execPath, [resolve('node_modules/playwright/cli.js'), 'test', '--config', config, spec, '--workers=1', '--reporter=line'], {
           cwd: resolve('.'),
-          env: { ...process.env, GHOSTBUG_BASE_URL: baseUrl, ...(browserPath ? { PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH: browserPath } : {}) },
+          env: { ...process.env, GHOSTBUG_BASE_URL: baseUrl },
           stdio: ['ignore', 'pipe', 'pipe'],
           timeout: 30000
         });

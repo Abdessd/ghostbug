@@ -26,6 +26,8 @@ export async function recordSession(options: RecordOptions): Promise<string> {
   const actions: RecordedAction[] = [];
   const network: NetworkFixture[] = [];
   const pending = new Set<Promise<void>>();
+  let skippedActions = 0;
+  let skippedResponses = 0;
   try {
     const context = await browser.newContext({ serviceWorkers: 'block' });
     await context.exposeBinding('__ghostbug_emit', (_source, raw: unknown) => {
@@ -33,7 +35,7 @@ export async function recordSession(options: RecordOptions): Promise<string> {
       const event = raw as Record<string, unknown>;
       if (typeof event.selector !== 'string' || event.selector.length > 500 || !event.selector) return;
       // Avoid storing a selector when it visibly contains an email, token or card number.
-      if (scrubString(event.selector) !== event.selector) return;
+      if (scrubString(event.selector) !== event.selector) { skippedActions++; return; }
       if (event.type === 'click') actions.push({ type: 'click', selector: event.selector });
       if (event.type === 'check' && typeof event.checked === 'boolean') actions.push({ type: 'check', selector: event.selector, checked: event.checked });
       if (event.type === 'fill') actions.push({ type: 'fill', selector: event.selector, value: scrubInput(event.value) });
@@ -45,11 +47,11 @@ export async function recordSession(options: RecordOptions): Promise<string> {
         try {
           const url = new URL(response.url());
           if (url.origin !== origin || !url.pathname.startsWith(apiPrefix)) return;
-          if (scrubString(url.pathname) !== url.pathname) return;
+          if (scrubString(url.pathname) !== url.pathname) { skippedResponses++; return; }
           const type = response.headers()['content-type'] ?? '';
           if (!type.includes('json') && !type.startsWith('text/plain')) return;
           const responseBody = await response.body();
-          if (responseBody.byteLength > 64 * 1024) return;
+          if (responseBody.byteLength > 64 * 1024) { skippedResponses++; return; }
           const method = response.request().method();
           network.push({
             method, path: url.pathname, status: response.status(),
@@ -82,6 +84,10 @@ export async function recordSession(options: RecordOptions): Promise<string> {
       throw Error('Non-interactive terminal: pass --duration <milliseconds>');
     }
     await Promise.allSettled(Array.from(pending));
+    const skipped: string[] = [];
+    if (skippedActions) skipped.push(`${skippedActions} action(s) dropped: the selector looked like it contained an email, token or card number.`);
+    if (skippedResponses) skipped.push(`${skippedResponses} API response(s) not saved (sensitive-looking path or body over 64 KiB). On replay those requests reach the local backend.`);
+    for (const line of skipped) console.warn('⚠ ' + line);
     const recording: Recording = {
       version: 1,
       name: 'recording-' + new Date().toISOString().replace(/[:.]/g, '-'),
@@ -92,7 +98,8 @@ export async function recordSession(options: RecordOptions): Promise<string> {
       notes: [
         'Review ALL data before sharing. Automated redaction is not comprehensive.',
         `Input values marked ${REDACTED} must be replaced with safe test values before replay.`,
-        'Responses may depend on undisclosed app state. Replay requires an accessible frontend.'
+        'Responses may depend on undisclosed app state. Replay requires an accessible frontend.',
+        ...skipped
       ]
     };
     return await writeRecording(options.output, recording);

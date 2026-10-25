@@ -13,7 +13,7 @@ export function resolveReplayTarget(startUrl: string, baseUrl?: string): URL {
   return new URL(recorded.pathname, base.origin);
 }
 
-/** Match against the replay target origin, not merely the pathname. */
+/** Fixture lookup key (method + path only). Callers must check the request origin separately. */
 export function fixtureKey(method: string, path: string): string {
   return `${method.toUpperCase()} ${path}`;
 }
